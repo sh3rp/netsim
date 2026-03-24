@@ -1,6 +1,7 @@
 use super::models::*;
 
-/// Apply a route policy to a BGP route. Returns None if the route is rejected.
+/// Apply a route policy to a BGP route. Returns the terminal action.
+#[allow(dead_code)]
 pub fn apply_policy(policy: &RoutePolicy, route: &mut BgpRoute) -> PolicyAction {
     for term in &policy.terms {
         if matches_conditions(&term.match_conditions, route) {

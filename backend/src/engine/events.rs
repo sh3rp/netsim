@@ -79,6 +79,7 @@ pub struct EventQueue {
     heap: BinaryHeap<SimEvent>,
 }
 
+#[allow(dead_code)]
 impl EventQueue {
     pub fn new() -> Self {
         Self {

@@ -97,7 +97,6 @@ pub fn add_interface(
     }
 
     // Add connected route to RIB
-    let prefix = format!("{}", ip_address.network());
     let prefix_with_mask = format!("{}/{}", ip_address.network(), ip_address.prefix());
     router.rib.insert(
         prefix_with_mask.clone(),
@@ -168,6 +167,8 @@ pub fn add_bgp_neighbor(
     neighbor_ip: Ipv4Addr,
     remote_asn: u32,
     local_asn: u32,
+    import_policy: Option<String>,
+    export_policy: Option<String>,
 ) {
     if let Some(bgp) = router.bgp_process.as_mut() {
         let is_ebgp = remote_asn != local_asn;
@@ -181,8 +182,8 @@ pub fn add_bgp_neighbor(
                 is_ebgp,
                 adj_rib_in: HashMap::new(),
                 adj_rib_out: HashMap::new(),
-                import_policy: None,
-                export_policy: None,
+                import_policy,
+                export_policy,
                 uptime_ticks: 0,
             },
         );
@@ -254,10 +255,10 @@ pub fn create_sample_topology() -> Topology {
 
     // Set up BGP peering
     if let Some(r1) = topology.get_router_mut("rtr-r1") {
-        add_bgp_neighbor(r1, "4.4.4.4".parse().unwrap(), 65002, 65001);
+        add_bgp_neighbor(r1, "4.4.4.4".parse().unwrap(), 65002, 65001, None, None);
     }
     if let Some(r4) = topology.get_router_mut("rtr-r4") {
-        add_bgp_neighbor(r4, "1.1.1.1".parse().unwrap(), 65001, 65002);
+        add_bgp_neighbor(r4, "1.1.1.1".parse().unwrap(), 65001, 65002, None, None);
     }
 
     topology

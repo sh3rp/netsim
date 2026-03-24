@@ -5,8 +5,6 @@ use super::events::{BgpFsmEvent, EventQueue};
 use super::models::*;
 use super::ospf::rebuild_fib;
 
-const BGP_FSM_TICKS_TO_ESTABLISHED: u64 = 5;
-
 /// Advance BGP FSM for a neighbor.
 pub fn advance_bgp_fsm(state: &BgpSessionState, _event: &BgpFsmEvent) -> BgpSessionState {
     match state {
@@ -272,7 +270,7 @@ fn advertise_routes(topology: &mut Topology) {
             };
 
             for (prefix, best_route) in &bgp.best_routes {
-                for (nkey, neighbor) in &bgp.neighbors {
+                for (_nkey, neighbor) in &bgp.neighbors {
                     if neighbor.state != BgpSessionState::Established {
                         continue;
                     }

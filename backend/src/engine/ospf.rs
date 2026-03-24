@@ -129,7 +129,7 @@ pub fn flood_lsa_to_area(topology: &mut Topology, lsa_key: &str, source_router_i
 }
 
 /// Run Dijkstra SPF on the LSDB for a given router and area.
-pub fn run_spf(router: &Router, area_id: u32) -> Vec<SpfResult> {
+pub fn run_spf(router: &Router, _area_id: u32) -> Vec<SpfResult> {
     let ospf = router.ospf_process.as_ref().unwrap();
 
     // Build a directed graph from Router LSAs in this area
@@ -142,10 +142,9 @@ pub fn run_spf(router: &Router, area_id: u32) -> Vec<SpfResult> {
         if lsa.lsa_type != LsaType::RouterLsa {
             continue;
         }
-        let key_suffix = format!(":{}", area_id);
         // Only process LSAs for this area (check key format)
         let router_ip = lsa.advertising_router;
-        let node = *node_map
+        let _node = *node_map
             .entry(router_ip)
             .or_insert_with(|| graph.add_node(router_ip));
 

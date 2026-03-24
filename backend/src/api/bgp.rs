@@ -60,7 +60,14 @@ async fn add_neighbor(
             .as_ref()
             .map(|b| b.local_asn)
             .unwrap_or(0);
-        store::add_bgp_neighbor(router, neighbor_ip, body.remote_asn, local_asn);
+        store::add_bgp_neighbor(
+            router,
+            neighbor_ip,
+            body.remote_asn,
+            local_asn,
+            body.import_policy.clone(),
+            body.export_policy.clone(),
+        );
         HttpResponse::Created().json(MessageResponse {
             message: format!("Added BGP neighbor {}", body.neighbor_ip),
         })

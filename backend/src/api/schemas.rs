@@ -48,7 +48,9 @@ pub struct EnableBgpRequest {
 pub struct AddBgpNeighborRequest {
     pub neighbor_ip: String,
     pub remote_asn: u32,
+    #[serde(default)]
     pub import_policy: Option<String>,
+    #[serde(default)]
     pub export_policy: Option<String>,
 }
 
