@@ -8,9 +8,10 @@ A real-time network simulator for designing and simulating network topologies wi
 - **OSPF Simulation** — Link-state routing with LSA flooding, SPF (Dijkstra), neighbor state machine, and multi-area support
 - **BGP Simulation** — Full FSM, best-path selection (RFC 4271), iBGP/eBGP peering, Adj-RIBs, and Loc-RIB
 - **Traffic Simulation** — Define traffic generators, trace flows through the network via FIB lookups, and visualize per-link utilization
-- **Route Policies** — Custom DSL for BGP import/export filtering with match conditions and set actions
+- **Route Policies** — BGP import/export filtering with two syntax options: a simple DSL and Juniper-style `policy-statement` syntax (auto-detected)
 - **Real-Time Visualization** — Cytoscape.js topology graph with live link utilization coloring, WebSocket tick updates, and interactive pan/zoom/drag
 - **Save/Load** — Export and import full topology snapshots as JSON
+- **GNS3 Export** — Export topologies as `.gns3` project files with auto-generated Cisco IOS startup configs (interfaces, OSPF, BGP, route-maps)
 
 ## Architecture
 
@@ -62,7 +63,7 @@ cargo build --release
 
 The interface is a dark-themed split layout:
 
-- **Toolbar** (top) — Add AS/routers/links, start/stop simulation, adjust tick rate, save/load topologies
+- **Toolbar** (top) — Add AS/routers/links, start/stop simulation, adjust tick rate, save/load topologies, export to GNS3
 - **Topology Canvas** (left) — Interactive graph showing autonomous systems as groups, routers as nodes, and links as edges. Link color reflects utilization (green → yellow → red). Failed links appear in red.
 - **Detail Panel** (right) — Context-sensitive view that shows:
   - **Router details** — interfaces, RIB entries, OSPF neighbors, BGP peers, BGP best routes, traffic generators
@@ -133,6 +134,21 @@ The outer `policy-options` wrapper is optional — `policy-statement` can be use
 | | `community delete <value>;` |
 | | `accept;` / `reject;` |
 
+## GNS3 Export
+
+Click **Export GNS3** in the toolbar (or `GET /api/v1/export/gns3`) to download a `.gns3` project file. The export includes:
+
+- **Nodes** — Each router becomes a Dynamips c7200 node positioned to match the canvas layout
+- **Links** — Interface connections mapped to Ethernet adapter/port pairs
+- **AS Drawings** — Autonomous system boundaries rendered as labeled SVG rectangles
+- **Startup Configs** — Each router gets a Cisco IOS config with:
+  - Interface IP addresses, bandwidth, and shutdown state
+  - OSPF process with router-id, network statements, and interface costs
+  - BGP process with neighbor statements and route-map references
+  - Route-maps translated from NetSim policies (local-preference, metric, as-path prepend, community set actions)
+
+Open the downloaded `.gns3` file in GNS3 to recreate the topology with a real router image.
+
 ## API
 
 All endpoints are under `/api/v1`. Key groups:
@@ -145,6 +161,7 @@ All endpoints are under `/api/v1`. Key groups:
 | Traffic | `/traffic/generators`, `flows`, `link-utilization` | Traffic generators and flow tracing |
 | Simulation | `/simulation/start`, `stop`, `step`, `state`, `tick-rate` | Control the simulation engine |
 | Policies | `/policies` | Create and manage route policies |
+| Export | `/export/gns3` | Download GNS3 project file |
 | WebSocket | `/ws` | Real-time tick update stream |
 
 ## Tech Stack
