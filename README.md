@@ -69,9 +69,13 @@ The interface is a dark-themed split layout:
   - **Link details** — connected routers, bandwidth, delay, current load/utilization, and a button to fail/restore the link
 - **Status Bar** (bottom) — Current simulation tick and state
 
-## Route Policy DSL
+## Route Policies
 
-Policies filter and modify BGP routes on import/export. Example:
+Policies filter and modify BGP routes on import/export. Two syntax formats are supported — the format is auto-detected when a policy is submitted.
+
+Policies are applied when configured on a BGP neighbor via `import_policy` or `export_policy`. Import policies filter routes entering the Loc-RIB; export policies filter routes being advertised to peers.
+
+### Simple DSL
 
 ```
 policy "prefer-customer" {
@@ -84,25 +88,50 @@ policy "prefer-customer" {
 }
 ```
 
-### Match Conditions
-
-| Condition | Description |
-|-----------|-------------|
-| `match prefix "10.0.0.0/8"` | Match destination prefix |
-| `match community "65001:100"` | Match BGP community |
-| `match as-path "^65002_"` | Match AS path (prefix/suffix/contains) |
-
-### Set Actions
-
-| Action | Description |
-|--------|-------------|
-| `set local-pref <n>` | Set local preference |
-| `set med <n>` | Set multi-exit discriminator |
-| `prepend-as <asn> <count>` | Prepend ASN to AS path |
-| `add-community "value"` | Add a BGP community |
-| `remove-community "value"` | Remove a BGP community |
+| Match Conditions | Set Actions |
+|---|---|
+| `match prefix "10.0.0.0/8"` | `set local-pref <n>` |
+| `match community "65001:100"` | `set med <n>` |
+| `match as-path "^65002_"` | `prepend-as <asn> <count>` |
+| | `add-community "value"` |
+| | `remove-community "value"` |
 
 Each term ends with `accept` or `reject`. Policies have a `default accept|reject` fallthrough.
+
+### Juniper-Style Syntax
+
+```
+policy-options {
+  policy-statement prefer-customer {
+    term set-pref {
+      from {
+        community 65001:100;
+        as-path "^65002";
+        route-filter 10.0.0.0/8 exact;
+      }
+      then {
+        local-preference 150;
+        metric 50;
+        as-path-prepend "65001 65001 65001";
+        community add no-export;
+        accept;
+      }
+    }
+    then reject;
+  }
+}
+```
+
+The outer `policy-options` wrapper is optional — `policy-statement` can be used directly.
+
+| `from` Conditions | `then` Actions |
+|---|---|
+| `community <value>;` | `local-preference <n>;` |
+| `as-path "<pattern>";` | `metric <n>;` |
+| `route-filter <prefix> exact;` | `as-path-prepend "<asn> ...";` |
+| | `community add <value>;` |
+| | `community delete <value>;` |
+| | `accept;` / `reject;` |
 
 ## API
 

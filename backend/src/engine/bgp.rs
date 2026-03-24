@@ -4,6 +4,7 @@ use std::net::Ipv4Addr;
 use super::events::{BgpFsmEvent, EventQueue};
 use super::models::*;
 use super::ospf::rebuild_fib;
+use super::policies::apply_policy;
 
 /// Advance BGP FSM for a neighbor.
 pub fn advance_bgp_fsm(state: &BgpSessionState, _event: &BgpFsmEvent) -> BgpSessionState {
@@ -137,7 +138,8 @@ fn advance_all_fsms(topology: &mut Topology, current_tick: u64, _event_queue: &m
 }
 
 fn process_route_updates(topology: &mut Topology) {
-    // For each router with established BGP sessions, import routes from adj_rib_in to loc_rib
+    // For each router with established BGP sessions, import routes from adj_rib_in to loc_rib.
+    // Apply import policies if configured on the neighbor.
     let router_ids: Vec<String> = topology
         .all_routers()
         .iter()
@@ -159,7 +161,19 @@ fn process_route_updates(topology: &mut Topology) {
                     continue;
                 }
                 for (prefix, route) in &neighbor.adj_rib_in {
-                    routes.push((prefix.clone(), route.clone()));
+                    let mut route = route.clone();
+
+                    // Apply import policy if configured
+                    if let Some(ref policy_name) = neighbor.import_policy {
+                        if let Some(policy) = topology.policies.get(policy_name) {
+                            let action = apply_policy(policy, &mut route);
+                            if matches!(action, PolicyAction::Reject) {
+                                continue; // Skip rejected routes
+                            }
+                        }
+                    }
+
+                    routes.push((prefix.clone(), route));
                 }
             }
             routes
@@ -259,7 +273,8 @@ fn run_best_path_selection(topology: &mut Topology) {
 }
 
 fn advertise_routes(topology: &mut Topology) {
-    // Collect best routes from each router to advertise to neighbors
+    // Collect best routes from each router to advertise to neighbors.
+    // Apply export policies if configured on the neighbor.
     let mut advertisements: Vec<(String, String, String, BgpRoute)> = Vec::new();
     // (target_router_id, target_neighbor_key, prefix, route)
 
@@ -287,6 +302,16 @@ fn advertise_routes(topology: &mut Topology) {
                     // Don't re-advertise a route back to the router that sent it
                     if adv_route.received_from == Some(neighbor.neighbor_ip) {
                         continue;
+                    }
+
+                    // Apply export policy if configured
+                    if let Some(ref policy_name) = neighbor.export_policy {
+                        if let Some(policy) = topology.policies.get(policy_name) {
+                            let action = apply_policy(policy, &mut adv_route);
+                            if matches!(action, PolicyAction::Reject) {
+                                continue; // Don't advertise rejected routes
+                            }
+                        }
                     }
 
                     // Find the target router for this neighbor
