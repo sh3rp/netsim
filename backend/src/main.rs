@@ -42,6 +42,7 @@ async fn main() -> std::io::Result<()> {
                     .configure(api::bgp::config)
                     .configure(api::traffic::config)
                     .configure(api::simulation::config)
+                    .configure(api::export::config)
                     .route("/policies", web::get().to(list_policies))
                     .route("/policies", web::post().to(create_policy))
                     .route("/policies/{name}", web::delete().to(delete_policy)),

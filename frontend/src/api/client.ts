@@ -154,6 +154,22 @@ export const saveSim = () =>
 export const loadSample = () =>
   request("/simulation/load-sample", { method: "POST" });
 
+// Export
+export const exportGns3 = async () => {
+  const res = await fetch(`${BASE}/export/gns3`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message || res.statusText);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "netsim-project.gns3";
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 // Policies
 export const listPolicies = () => request<any>("/policies");
 export const createPolicy = (policyText: string) =>

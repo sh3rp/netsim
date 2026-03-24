@@ -91,6 +91,9 @@ export default function Toolbar() {
         <button style={styles.btn} onClick={handleSave}>
           Save
         </button>
+        <button style={styles.btn} onClick={() => api.exportGns3()}>
+          Export GNS3
+        </button>
       </div>
     </div>
   );
