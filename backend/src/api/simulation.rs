@@ -4,6 +4,7 @@ use actix_web::{web, HttpResponse};
 use parking_lot::RwLock;
 
 use crate::api::schemas::*;
+use crate::engine::models::Topology;
 use crate::engine::simulation::SimulationEngine;
 use crate::persistence::store;
 
@@ -19,7 +20,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/tick-rate", web::put().to(set_tick_rate))
             .route("/save", web::post().to(save))
             .route("/load", web::post().to(load))
-            .route("/load-sample", web::post().to(load_sample)),
+            .route("/load-sample", web::post().to(load_sample))
+            .route("/reset", web::post().to(reset)),
     );
 }
 
@@ -86,6 +88,16 @@ async fn load(state: AppState, body: web::Bytes) -> HttpResponse {
             message: format!("Failed to load: {}", e),
         }),
     }
+}
+
+async fn reset(state: AppState) -> HttpResponse {
+    let mut engine = state.write();
+    engine.topology = Topology::default();
+    engine.state.tick = 0;
+    engine.state.running = false;
+    HttpResponse::Ok().json(MessageResponse {
+        message: "Simulation reset".to_string(),
+    })
 }
 
 async fn load_sample(state: AppState) -> HttpResponse {

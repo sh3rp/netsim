@@ -170,6 +170,14 @@ export const saveSim = () =>
   request<any>("/simulation/save", { method: "POST" });
 export const loadSample = () =>
   request("/simulation/load-sample", { method: "POST" });
+export const loadSim = (json: string) =>
+  request("/simulation/load", {
+    method: "POST",
+    body: json,
+    headers: { "Content-Type": "application/json" },
+  });
+export const resetSim = () =>
+  request("/simulation/reset", { method: "POST" });
 
 // Export
 export const exportGns3 = async () => {
