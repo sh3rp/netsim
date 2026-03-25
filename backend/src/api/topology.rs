@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use actix_web::{web, HttpResponse};
@@ -51,10 +52,7 @@ async fn create_autonomous_system(
     HttpResponse::Created().json(IdResponse { id })
 }
 
-async fn get_autonomous_system(
-    state: AppState,
-    path: web::Path<String>,
-) -> HttpResponse {
+async fn get_autonomous_system(state: AppState, path: web::Path<String>) -> HttpResponse {
     let engine = state.read();
     let as_id = path.into_inner();
     match engine.topology.autonomous_systems.get(&as_id) {
@@ -65,16 +63,26 @@ async fn get_autonomous_system(
     }
 }
 
-async fn delete_autonomous_system(
-    state: AppState,
-    path: web::Path<String>,
-) -> HttpResponse {
+async fn delete_autonomous_system(state: AppState, path: web::Path<String>) -> HttpResponse {
     let mut engine = state.write();
     let as_id = path.into_inner();
     match engine.topology.autonomous_systems.remove(&as_id) {
-        Some(_) => HttpResponse::Ok().json(MessageResponse {
-            message: format!("Deleted AS {}", as_id),
-        }),
+        Some(asys) => {
+            // Remove all links connected to interfaces that belonged to this AS.
+            let iface_ids: HashSet<String> = asys
+                .routers
+                .values()
+                .flat_map(|r| r.interfaces.keys().cloned())
+                .collect();
+            let links_to_remove = collect_links_for_interfaces(&engine.topology, &iface_ids);
+            for link_id in links_to_remove {
+                remove_link_and_detach_interfaces(&mut engine.topology, &link_id);
+            }
+
+            HttpResponse::Ok().json(MessageResponse {
+                message: format!("Deleted AS {}", as_id),
+            })
+        }
         None => HttpResponse::NotFound().json(MessageResponse {
             message: format!("AS {} not found", as_id),
         }),
@@ -112,7 +120,12 @@ async fn create_router(
         }
     };
 
-    let router = store::create_router(&body.name, &as_id, router_ip, (body.position_x, body.position_y));
+    let router = store::create_router(
+        &body.name,
+        &as_id,
+        router_ip,
+        (body.position_x, body.position_y),
+    );
     let id = router.id.clone();
 
     match engine.topology.autonomous_systems.get_mut(&as_id) {
@@ -154,7 +167,10 @@ async fn create_standalone_router(
         (body.position_x, body.position_y),
     );
     let id = router.id.clone();
-    engine.topology.standalone_routers.insert(id.clone(), router);
+    engine
+        .topology
+        .standalone_routers
+        .insert(id.clone(), router);
     HttpResponse::Created().json(IdResponse { id })
 }
 
@@ -173,9 +189,18 @@ async fn delete_router(state: AppState, path: web::Path<String>) -> HttpResponse
     let mut engine = state.write();
     let router_id = path.into_inner();
     match engine.topology.remove_router(&router_id) {
-        Some(_) => HttpResponse::Ok().json(MessageResponse {
-            message: format!("Deleted router {}", router_id),
-        }),
+        Some(router) => {
+            // Remove all links connected to interfaces that belonged to this router.
+            let iface_ids: HashSet<String> = router.interfaces.keys().cloned().collect();
+            let links_to_remove = collect_links_for_interfaces(&engine.topology, &iface_ids);
+            for link_id in links_to_remove {
+                remove_link_and_detach_interfaces(&mut engine.topology, &link_id);
+            }
+
+            HttpResponse::Ok().json(MessageResponse {
+                message: format!("Deleted router {}", router_id),
+            })
+        }
         None => HttpResponse::NotFound().json(MessageResponse {
             message: format!("Router {} not found", router_id),
         }),
@@ -215,11 +240,33 @@ async fn list_links(state: AppState) -> HttpResponse {
     HttpResponse::Ok().json(links)
 }
 
-async fn create_link(
-    state: AppState,
-    body: web::Json<CreateLinkRequest>,
-) -> HttpResponse {
+async fn create_link(state: AppState, body: web::Json<CreateLinkRequest>) -> HttpResponse {
     let mut engine = state.write();
+
+    if body.interface_a_id == body.interface_b_id {
+        return HttpResponse::BadRequest().json(MessageResponse {
+            message: "Link endpoints must be different interfaces".to_string(),
+        });
+    }
+
+    let iface_a = find_interface(&engine.topology, &body.interface_a_id);
+    let iface_b = find_interface(&engine.topology, &body.interface_b_id);
+    let Some(iface_a) = iface_a else {
+        return HttpResponse::BadRequest().json(MessageResponse {
+            message: format!("Interface {} not found", body.interface_a_id),
+        });
+    };
+    let Some(iface_b) = iface_b else {
+        return HttpResponse::BadRequest().json(MessageResponse {
+            message: format!("Interface {} not found", body.interface_b_id),
+        });
+    };
+    if iface_a.link_id.is_some() || iface_b.link_id.is_some() {
+        return HttpResponse::BadRequest().json(MessageResponse {
+            message: "One or both interfaces are already linked".to_string(),
+        });
+    }
+
     let link_id = store::create_link(
         &mut engine.topology,
         &body.interface_a_id,
@@ -233,36 +280,11 @@ async fn create_link(
 async fn delete_link(state: AppState, path: web::Path<String>) -> HttpResponse {
     let mut engine = state.write();
     let link_id = path.into_inner();
-
-    // Remove link_id from connected interfaces
-    if let Some(link) = engine.topology.links.get(&link_id) {
-        let iface_a = link.interface_a_id.clone();
-        let iface_b = link.interface_b_id.clone();
-        for router in engine.topology.standalone_routers.values_mut() {
-            if let Some(iface) = router.interfaces.get_mut(&iface_a) {
-                iface.link_id = None;
-            }
-            if let Some(iface) = router.interfaces.get_mut(&iface_b) {
-                iface.link_id = None;
-            }
-        }
-        for asys in engine.topology.autonomous_systems.values_mut() {
-            for router in asys.routers.values_mut() {
-                if let Some(iface) = router.interfaces.get_mut(&iface_a) {
-                    iface.link_id = None;
-                }
-                if let Some(iface) = router.interfaces.get_mut(&iface_b) {
-                    iface.link_id = None;
-                }
-            }
-        }
-    }
-
-    match engine.topology.links.remove(&link_id) {
-        Some(_) => HttpResponse::Ok().json(MessageResponse {
+    match remove_link_and_detach_interfaces(&mut engine.topology, &link_id) {
+        true => HttpResponse::Ok().json(MessageResponse {
             message: format!("Deleted link {}", link_id),
         }),
-        None => HttpResponse::NotFound().json(MessageResponse {
+        false => HttpResponse::NotFound().json(MessageResponse {
             message: format!("Link {} not found", link_id),
         }),
     }
@@ -295,4 +317,62 @@ async fn set_link_state(
 async fn get_topology_snapshot(state: AppState) -> HttpResponse {
     let engine = state.read();
     HttpResponse::Ok().json(&engine.topology)
+}
+
+fn find_interface<'a>(
+    topology: &'a crate::engine::models::Topology,
+    iface_id: &str,
+) -> Option<&'a crate::engine::models::Interface> {
+    for router in topology.all_routers() {
+        if let Some(iface) = router.interfaces.get(iface_id) {
+            return Some(iface);
+        }
+    }
+    None
+}
+
+fn collect_links_for_interfaces(
+    topology: &crate::engine::models::Topology,
+    iface_ids: &HashSet<String>,
+) -> Vec<String> {
+    topology
+        .links
+        .values()
+        .filter(|link| {
+            iface_ids.contains(&link.interface_a_id) || iface_ids.contains(&link.interface_b_id)
+        })
+        .map(|link| link.id.clone())
+        .collect()
+}
+
+fn remove_link_and_detach_interfaces(
+    topology: &mut crate::engine::models::Topology,
+    link_id: &str,
+) -> bool {
+    let Some(link) = topology.links.get(link_id) else {
+        return false;
+    };
+    let iface_a = link.interface_a_id.clone();
+    let iface_b = link.interface_b_id.clone();
+
+    for router in topology.standalone_routers.values_mut() {
+        if let Some(iface) = router.interfaces.get_mut(&iface_a) {
+            iface.link_id = None;
+        }
+        if let Some(iface) = router.interfaces.get_mut(&iface_b) {
+            iface.link_id = None;
+        }
+    }
+    for asys in topology.autonomous_systems.values_mut() {
+        for router in asys.routers.values_mut() {
+            if let Some(iface) = router.interfaces.get_mut(&iface_a) {
+                iface.link_id = None;
+            }
+            if let Some(iface) = router.interfaces.get_mut(&iface_b) {
+                iface.link_id = None;
+            }
+        }
+    }
+    topology.links.remove(link_id);
+    true
 }

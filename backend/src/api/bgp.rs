@@ -112,10 +112,7 @@ async fn enable_bgp(
     }
 }
 
-async fn get_adj_rib_in(
-    state: AppState,
-    path: web::Path<(String, String)>,
-) -> HttpResponse {
+async fn get_adj_rib_in(state: AppState, path: web::Path<(String, String)>) -> HttpResponse {
     let engine = state.read();
     let (router_id, neighbor_key) = path.into_inner();
     match engine.topology.get_router(&router_id) {

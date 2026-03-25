@@ -20,9 +20,16 @@ export default function AppShell() {
     ws.connect();
 
     const unsub = ws.onTick((update) => {
+      const changes = update.changes ?? {
+        link_utilization: update.link_utilization ?? {},
+        ospf_converged: update.ospf_converged ?? [],
+        bgp_state_changes: update.bgp_state_changes ?? [],
+        route_changes: update.route_changes ?? [],
+        traffic_flows: update.traffic_flows ?? [],
+      };
       setTick(update.tick);
-      updateLinkUtilization(update.changes.link_utilization);
-      setFlows(update.changes.traffic_flows);
+      updateLinkUtilization(changes.link_utilization);
+      setFlows(changes.traffic_flows);
     });
 
     // Initial topology load

@@ -183,9 +183,14 @@ export interface SimulationState {
 // WebSocket tick update (diff)
 
 export interface TickUpdate {
-  type: "tick_update";
+  type?: "tick_update";
   tick: number;
-  changes: {
+  link_utilization?: Record<string, number>;
+  ospf_converged?: string[];
+  bgp_state_changes?: { router: string; neighbor: string; state: string }[];
+  route_changes?: { router: string; prefix: string; action: string; via: string }[];
+  traffic_flows?: TrafficFlow[];
+  changes?: {
     link_utilization: Record<string, number>;
     ospf_converged: string[];
     bgp_state_changes: { router: string; neighbor: string; state: string }[];

@@ -50,10 +50,7 @@ async fn step(state: AppState) -> HttpResponse {
     HttpResponse::Ok().json(update)
 }
 
-async fn set_tick_rate(
-    state: AppState,
-    body: web::Json<TickRateRequest>,
-) -> HttpResponse {
+async fn set_tick_rate(state: AppState, body: web::Json<TickRateRequest>) -> HttpResponse {
     let mut engine = state.write();
     engine.state.tick_rate_ms = body.tick_rate_ms.max(10).min(5000);
     HttpResponse::Ok().json(MessageResponse {

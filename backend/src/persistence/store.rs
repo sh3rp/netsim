@@ -136,15 +136,12 @@ pub fn create_link(
     topology.links.insert(link_id.clone(), link);
 
     // Set link_id on both interfaces (search AS-bound and standalone routers)
-    let all_routers = topology
-        .standalone_routers
-        .values_mut()
-        .chain(
-            topology
-                .autonomous_systems
-                .values_mut()
-                .flat_map(|a| a.routers.values_mut()),
-        );
+    let all_routers = topology.standalone_routers.values_mut().chain(
+        topology
+            .autonomous_systems
+            .values_mut()
+            .flat_map(|a| a.routers.values_mut()),
+    );
     for router in all_routers {
         if let Some(iface) = router.interfaces.get_mut(iface_a_id) {
             iface.link_id = Some(link_id.clone());
@@ -208,12 +205,48 @@ pub fn create_sample_topology() -> Topology {
     let mut r3 = create_router("R3", &as1.id, "3.3.3.3".parse().unwrap(), (200.0, 100.0));
 
     // Interfaces for AS1
-    let r1_eth0 = add_interface(&mut r1, "eth0", "10.0.12.1/30".parse().unwrap(), 1_000_000_000, 10);
-    let r2_eth0 = add_interface(&mut r2, "eth0", "10.0.12.2/30".parse().unwrap(), 1_000_000_000, 10);
-    let r1_eth1 = add_interface(&mut r1, "eth1", "10.0.13.1/30".parse().unwrap(), 1_000_000_000, 10);
-    let r3_eth0 = add_interface(&mut r3, "eth0", "10.0.13.2/30".parse().unwrap(), 1_000_000_000, 10);
-    let r2_eth1 = add_interface(&mut r2, "eth1", "10.0.23.1/30".parse().unwrap(), 1_000_000_000, 10);
-    let r3_eth1 = add_interface(&mut r3, "eth1", "10.0.23.2/30".parse().unwrap(), 1_000_000_000, 10);
+    let r1_eth0 = add_interface(
+        &mut r1,
+        "eth0",
+        "10.0.12.1/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r2_eth0 = add_interface(
+        &mut r2,
+        "eth0",
+        "10.0.12.2/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r1_eth1 = add_interface(
+        &mut r1,
+        "eth1",
+        "10.0.13.1/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r3_eth0 = add_interface(
+        &mut r3,
+        "eth0",
+        "10.0.13.2/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r2_eth1 = add_interface(
+        &mut r2,
+        "eth1",
+        "10.0.23.1/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r3_eth1 = add_interface(
+        &mut r3,
+        "eth1",
+        "10.0.23.2/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
 
     // Loopbacks
     add_interface(&mut r1, "lo0", "10.1.1.1/32".parse().unwrap(), 0, 0);
@@ -221,7 +254,13 @@ pub fn create_sample_topology() -> Topology {
     add_interface(&mut r3, "lo0", "10.1.3.1/32".parse().unwrap(), 0, 0);
 
     // eBGP interface on R1
-    let r1_eth2 = add_interface(&mut r1, "eth2", "172.16.0.1/30".parse().unwrap(), 1_000_000_000, 10);
+    let r1_eth2 = add_interface(
+        &mut r1,
+        "eth2",
+        "172.16.0.1/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
 
     // Enable BGP on border router
     enable_bgp(&mut r1, 65001);
@@ -236,9 +275,27 @@ pub fn create_sample_topology() -> Topology {
     let mut r4 = create_router("R4", &as2.id, "4.4.4.4".parse().unwrap(), (500.0, 200.0));
     let mut r5 = create_router("R5", &as2.id, "5.5.5.5".parse().unwrap(), (700.0, 200.0));
 
-    let r4_eth0 = add_interface(&mut r4, "eth0", "172.16.0.2/30".parse().unwrap(), 1_000_000_000, 10);
-    let r4_eth1 = add_interface(&mut r4, "eth1", "10.2.45.1/30".parse().unwrap(), 1_000_000_000, 10);
-    let r5_eth0 = add_interface(&mut r5, "eth0", "10.2.45.2/30".parse().unwrap(), 1_000_000_000, 10);
+    let r4_eth0 = add_interface(
+        &mut r4,
+        "eth0",
+        "172.16.0.2/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r4_eth1 = add_interface(
+        &mut r4,
+        "eth1",
+        "10.2.45.1/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
+    let r5_eth0 = add_interface(
+        &mut r5,
+        "eth0",
+        "10.2.45.2/30".parse().unwrap(),
+        1_000_000_000,
+        10,
+    );
 
     add_interface(&mut r4, "lo0", "10.2.4.1/32".parse().unwrap(), 0, 0);
     add_interface(&mut r5, "lo0", "10.2.5.1/32".parse().unwrap(), 0, 0);

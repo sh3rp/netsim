@@ -12,9 +12,7 @@ use crate::engine::simulation::SimulationEngine;
 type AppState = web::Data<Arc<RwLock<SimulationEngine>>>;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/export").route("/gns3", web::get().to(export_gns3)),
-    );
+    cfg.service(web::scope("/export").route("/gns3", web::get().to(export_gns3)));
 }
 
 async fn export_gns3(state: AppState) -> HttpResponse {
@@ -29,11 +27,9 @@ async fn export_gns3(state: AppState) -> HttpResponse {
                 "attachment; filename=\"netsim-project.gns3\"",
             ))
             .body(json),
-        Err(e) => HttpResponse::InternalServerError().json(
-            crate::api::schemas::MessageResponse {
-                message: format!("Failed to export: {}", e),
-            },
-        ),
+        Err(e) => HttpResponse::InternalServerError().json(crate::api::schemas::MessageResponse {
+            message: format!("Failed to export: {}", e),
+        }),
     }
 }
 
@@ -64,10 +60,12 @@ fn topology_to_gns3(topology: &Topology) -> Gns3Project {
         router_node_map.insert(router.id.clone(), node_id.clone());
 
         // Map interfaces to adapter/port numbers
-        let mut port_number: u32 = 0;
-        let mut ports = Vec::new();
+        let mut ordered_ifaces: Vec<_> = router.interfaces.iter().collect();
+        ordered_ifaces.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-        for (iface_id, iface) in &router.interfaces {
+        let mut ports = Vec::new();
+        for (port_number, (iface_id, iface)) in ordered_ifaces.into_iter().enumerate() {
+            let port_number = port_number as u32;
             iface_port_map.insert(iface_id.clone(), (node_id.clone(), 0, port_number));
 
             ports.push(Gns3Port {
@@ -76,12 +74,12 @@ fn topology_to_gns3(topology: &Topology) -> Gns3Project {
                 name: format!("Ethernet{}", port_number),
                 short_name: format!("e{}", port_number),
                 link_type: "ethernet".to_string(),
-                data_link_types: HashMap::from([
-                    ("Ethernet".to_string(), "DLT_EN10MB".to_string()),
-                ]),
+                data_link_types: HashMap::from([(
+                    "Ethernet".to_string(),
+                    "DLT_EN10MB".to_string(),
+                )]),
                 description: format!("{} - {}", iface_id, iface.ip_address),
             });
-            port_number += 1;
         }
 
         // Build router configuration for properties
@@ -249,23 +247,27 @@ fn topology_to_gns3(topology: &Topology) -> Gns3Project {
 }
 
 /// Build a Cisco IOS-style startup config for a router.
-fn build_router_config(
-    router: &crate::engine::models::Router,
-    topology: &Topology,
-) -> String {
+fn build_router_config(router: &crate::engine::models::Router, topology: &Topology) -> String {
     let mut config = String::new();
+    let mut ordered_ifaces: Vec<_> = router.interfaces.iter().collect();
+    ordered_ifaces.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     config.push_str("!\n");
     config.push_str(&format!("hostname {}\n", router.name));
     config.push_str("!\n");
 
     // Interfaces
-    for (idx, (_iface_id, iface)) in router.interfaces.iter().enumerate() {
+    for (idx, (_iface_id, iface)) in ordered_ifaces.iter().enumerate() {
         config.push_str(&format!("interface Ethernet{}\n", idx));
-        config.push_str(&format!(" ip address {} {}\n", iface.ip_address.ip(), prefix_to_mask(iface.ip_address.prefix())));
+        config.push_str(&format!(
+            " ip address {} {}\n",
+            iface.ip_address.ip(),
+            prefix_to_mask(iface.ip_address.prefix())
+        ));
         if let Some(ref link_id) = iface.link_id {
             if let Some(link) = topology.links.get(link_id) {
-                config.push_str(&format!(" bandwidth {}\n", link.bandwidth / 1000)); // kbps
+                config.push_str(&format!(" bandwidth {}\n", link.bandwidth / 1000));
+                // kbps
             }
         }
         if iface.is_up {
@@ -295,7 +297,7 @@ fn build_router_config(
         }
 
         // Interface costs
-        for (idx, (_iface_id, iface)) in router.interfaces.iter().enumerate() {
+        for (idx, (_iface_id, iface)) in ordered_ifaces.iter().enumerate() {
             if iface.cost != 1 {
                 config.push_str(&format!(
                     "interface Ethernet{}\n ip ospf cost {}\n!\n",
@@ -358,10 +360,7 @@ fn build_router_config(
                     }
                     crate::engine::models::PolicySetAction::PrependAsPath { asn, count } => {
                         let prepend: Vec<String> = (0..*count).map(|_| asn.to_string()).collect();
-                        config.push_str(&format!(
-                            " set as-path prepend {}\n",
-                            prepend.join(" ")
-                        ));
+                        config.push_str(&format!(" set as-path prepend {}\n", prepend.join(" ")));
                     }
                     crate::engine::models::PolicySetAction::AddCommunity(c) => {
                         config.push_str(&format!(" set community {} additive\n", c));

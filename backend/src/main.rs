@@ -54,9 +54,7 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-async fn list_policies(
-    state: web::Data<Arc<RwLock<SimulationEngine>>>,
-) -> actix_web::HttpResponse {
+async fn list_policies(state: web::Data<Arc<RwLock<SimulationEngine>>>) -> actix_web::HttpResponse {
     let engine = state.read();
     actix_web::HttpResponse::Ok().json(&engine.topology.policies)
 }

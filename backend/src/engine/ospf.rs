@@ -99,7 +99,12 @@ pub fn schedule_lsa_flood(
 }
 
 /// Flood an LSA to all routers in the same area (simplified: direct copy).
-pub fn flood_lsa_to_area(topology: &mut Topology, lsa_key: &str, source_router_id: &str, area_id: u32) {
+pub fn flood_lsa_to_area(
+    topology: &mut Topology,
+    lsa_key: &str,
+    source_router_id: &str,
+    area_id: u32,
+) {
     // First, extract the LSA from the source router
     let lsa = {
         let source = topology.get_router(source_router_id).unwrap();
@@ -115,7 +120,9 @@ pub fn flood_lsa_to_area(topology: &mut Topology, lsa_key: &str, source_router_i
         .iter()
         .filter(|r| {
             r.id != source_router_id
-                && r.ospf_process.as_ref().map_or(false, |o| o.areas.contains_key(&area_id))
+                && r.ospf_process
+                    .as_ref()
+                    .map_or(false, |o| o.areas.contains_key(&area_id))
         })
         .map(|r| r.id.clone())
         .collect();
@@ -265,7 +272,8 @@ fn compute_next_hops(
     let mut next_hops: HashMap<Ipv4Addr, (Ipv4Addr, String)> = HashMap::new();
 
     // For each destination, trace back to find the first hop
-    let reverse_map: HashMap<NodeIndex, Ipv4Addr> = node_map.iter().map(|(ip, n)| (*n, *ip)).collect();
+    let reverse_map: HashMap<NodeIndex, Ipv4Addr> =
+        node_map.iter().map(|(ip, n)| (*n, *ip)).collect();
 
     for (node, _cost) in costs {
         if *node == start {
@@ -418,10 +426,9 @@ pub fn tick_ospf(topology: &mut Topology, current_tick: u64, event_queue: &mut E
                 let key = lsa_key_router(router.router_id_ip, *area_id);
 
                 // Check if LSA changed
-                let changed = ospf
-                    .lsdb
-                    .get(&key)
-                    .map_or(true, |existing| lsa.sequence_number > existing.sequence_number);
+                let changed = ospf.lsdb.get(&key).map_or(true, |existing| {
+                    lsa.sequence_number > existing.sequence_number
+                });
 
                 if changed {
                     lsa_updates.push((router.id.clone(), *area_id, key, lsa));
@@ -442,11 +449,7 @@ pub fn tick_ospf(topology: &mut Topology, current_tick: u64, event_queue: &mut E
     let pending_routers: Vec<String> = topology
         .all_routers()
         .iter()
-        .filter(|r| {
-            r.ospf_process
-                .as_ref()
-                .map_or(false, |o| o.spf_pending)
-        })
+        .filter(|r| r.ospf_process.as_ref().map_or(false, |o| o.spf_pending))
         .map(|r| r.id.clone())
         .collect();
 
@@ -537,4 +540,203 @@ fn find_router_for_interface(topology: &Topology, iface_id: &str) -> Option<(Str
 
 fn lsa_key_router(router_ip: Ipv4Addr, area_id: u32) -> String {
     format!("rtr:{}:{}", router_ip, area_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::store;
+
+    fn build_router_lsa(advertising_router: Ipv4Addr, seq: u32, links: Vec<RouterLsaLink>) -> Lsa {
+        Lsa {
+            lsa_type: LsaType::RouterLsa,
+            advertising_router,
+            link_state_id: format!("{}", advertising_router),
+            sequence_number: seq,
+            age: 0,
+            body: LsaBody::Router { links },
+        }
+    }
+
+    #[test]
+    fn test_rfc2328_lsa_install_newer_sequence_replaces_older() {
+        let mut router = store::create_router(
+            "R1",
+            "as-65001",
+            "1.1.1.1".parse().unwrap(),
+            (0.0, 0.0),
+        );
+        let area_id = 0;
+        let rid = router.router_id_ip;
+        let key = lsa_key_router(rid, area_id);
+
+        let lsa_v10 = build_router_lsa(rid, 10, Vec::new());
+        let lsa_v9 = build_router_lsa(rid, 9, Vec::new());
+        let lsa_v11 = build_router_lsa(rid, 11, Vec::new());
+
+        assert!(install_lsa(&mut router, area_id, lsa_v10));
+        assert!(!install_lsa(&mut router, area_id, lsa_v9));
+        assert_eq!(
+            router
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .lsdb
+                .get(&key)
+                .unwrap()
+                .sequence_number,
+            10
+        );
+        assert!(install_lsa(&mut router, area_id, lsa_v11));
+        assert_eq!(
+            router
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .lsdb
+                .get(&key)
+                .unwrap()
+                .sequence_number,
+            11
+        );
+    }
+
+    #[test]
+    fn test_rfc2328_adjacency_tracks_link_up_down() {
+        let mut topology = Topology::default();
+        let mut asys = store::create_autonomous_system(65001, "AS1");
+        let mut r1 = store::create_router("R1", &asys.id, "1.1.1.1".parse().unwrap(), (0.0, 0.0));
+        let mut r2 = store::create_router("R2", &asys.id, "2.2.2.2".parse().unwrap(), (100.0, 0.0));
+
+        let r1_eth0 =
+            store::add_interface(&mut r1, "eth0", "10.0.12.1/30".parse().unwrap(), 1_000_000_000, 10);
+        let r2_eth0 =
+            store::add_interface(&mut r2, "eth0", "10.0.12.2/30".parse().unwrap(), 1_000_000_000, 10);
+
+        asys.routers.insert(r1.id.clone(), r1);
+        asys.routers.insert(r2.id.clone(), r2);
+        topology.autonomous_systems.insert(asys.id.clone(), asys);
+
+        let link_id = store::create_link(&mut topology, &r1_eth0, &r2_eth0, 1_000_000_000, 1.0);
+
+        update_ospf_neighbors(&mut topology);
+        let r1_after_up = topology.get_router("rtr-r1").unwrap();
+        let r2_after_up = topology.get_router("rtr-r2").unwrap();
+        assert_eq!(
+            r1_after_up
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .neighbors
+                .get("2.2.2.2")
+                .unwrap()
+                .state,
+            OspfNeighborState::Full
+        );
+        assert_eq!(
+            r2_after_up
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .neighbors
+                .get("1.1.1.1")
+                .unwrap()
+                .state,
+            OspfNeighborState::Full
+        );
+
+        topology.links.get_mut(&link_id).unwrap().is_up = false;
+        update_ospf_neighbors(&mut topology);
+
+        let r1_after_down = topology.get_router("rtr-r1").unwrap();
+        let r2_after_down = topology.get_router("rtr-r2").unwrap();
+        assert_eq!(
+            r1_after_down
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .neighbors
+                .get("2.2.2.2")
+                .unwrap()
+                .state,
+            OspfNeighborState::Down
+        );
+        assert_eq!(
+            r2_after_down
+                .ospf_process
+                .as_ref()
+                .unwrap()
+                .neighbors
+                .get("1.1.1.1")
+                .unwrap()
+                .state,
+            OspfNeighborState::Down
+        );
+    }
+
+    #[test]
+    fn test_rfc2328_spf_chooses_lowest_cost_path_and_next_hop() {
+        let mut topology = Topology::default();
+        let mut asys = store::create_autonomous_system(65001, "AS1");
+        let mut r1 = store::create_router("R1", &asys.id, "1.1.1.1".parse().unwrap(), (0.0, 0.0));
+        let mut r2 = store::create_router("R2", &asys.id, "2.2.2.2".parse().unwrap(), (100.0, 0.0));
+
+        let r1_eth0 =
+            store::add_interface(&mut r1, "eth0", "10.0.12.1/30".parse().unwrap(), 1_000_000_000, 10);
+        let r2_eth0 =
+            store::add_interface(&mut r2, "eth0", "10.0.12.2/30".parse().unwrap(), 1_000_000_000, 20);
+        store::add_interface(&mut r2, "lo0", "10.2.2.2/32".parse().unwrap(), 0, 1);
+
+        asys.routers.insert(r1.id.clone(), r1);
+        asys.routers.insert(r2.id.clone(), r2);
+        topology.autonomous_systems.insert(asys.id.clone(), asys);
+
+        store::create_link(&mut topology, &r1_eth0, &r2_eth0, 1_000_000_000, 1.0);
+
+        let r1_snapshot = topology.get_router("rtr-r1").unwrap().clone();
+        let r2_snapshot = topology.get_router("rtr-r2").unwrap().clone();
+        let r1_lsa = originate_router_lsa(&r1_snapshot, 0);
+        let r2_lsa = originate_router_lsa(&r2_snapshot, 0);
+
+        {
+            let r1_mut = topology.get_router_mut("rtr-r1").unwrap();
+            install_lsa(r1_mut, 0, r1_lsa);
+            install_lsa(r1_mut, 0, r2_lsa);
+        }
+
+        let r1_for_spf = topology.get_router("rtr-r1").unwrap();
+        let results = run_spf(r1_for_spf, 0);
+
+        let remote = results
+            .iter()
+            .find(|r| r.destination == "10.2.2.2/32".parse::<Ipv4Network>().unwrap())
+            .unwrap();
+        assert_eq!(remote.cost, 11);
+        assert_eq!(remote.next_hop, "2.2.2.2".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(remote.next_hop_interface_id, "rtr-r1-eth0");
+    }
+
+    #[test]
+    fn test_rfc2328_ospf_route_does_not_override_connected() {
+        let mut router = store::create_router(
+            "R1",
+            "as-65001",
+            "1.1.1.1".parse().unwrap(),
+            (0.0, 0.0),
+        );
+        store::add_interface(&mut router, "lo0", "10.1.1.1/32".parse().unwrap(), 0, 1);
+
+        let spf_results = vec![SpfResult {
+            destination: "10.1.1.1/32".parse().unwrap(),
+            cost: 5,
+            next_hop: "10.1.1.1".parse().unwrap(),
+            next_hop_interface_id: "rtr-r1-lo0".to_string(),
+        }];
+
+        install_ospf_routes(&mut router, &spf_results);
+
+        let entry = router.rib.get("10.1.1.1/32").unwrap();
+        assert_eq!(entry.protocol, RouteProtocol::Connected);
+        assert_eq!(entry.admin_distance, 0);
+    }
 }

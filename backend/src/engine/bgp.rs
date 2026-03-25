@@ -220,8 +220,7 @@ fn run_best_path_selection(topology: &mut Topology) {
         if let Some(router) = topology.get_router_mut(&router_id) {
             // Remove old BGP routes
             router.rib.retain(|_, e| {
-                e.protocol != RouteProtocol::BgpExternal
-                    && e.protocol != RouteProtocol::BgpInternal
+                e.protocol != RouteProtocol::BgpExternal && e.protocol != RouteProtocol::BgpInternal
             });
 
             let local_asn = router
@@ -351,4 +350,216 @@ fn find_router_by_ip(topology: &Topology, ip: Ipv4Addr) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    fn test_route(
+        local_pref: u32,
+        as_path: Vec<u32>,
+        origin: BgpOrigin,
+        med: u32,
+        weight: u32,
+        received_from: Option<Ipv4Addr>,
+    ) -> BgpRoute {
+        BgpRoute {
+            prefix: "203.0.113.0/24".to_string(),
+            attributes: BgpAttributes {
+                as_path,
+                local_pref,
+                med,
+                next_hop: "192.0.2.1".parse().unwrap(),
+                origin,
+                communities: Vec::new(),
+                weight,
+            },
+            received_from,
+            is_best: false,
+        }
+    }
+
+    #[test]
+    fn test_select_best_path_empty_and_single() {
+        assert_eq!(select_best_path(&[]), None);
+
+        let only = test_route(
+            100,
+            vec![65001],
+            BgpOrigin::Igp,
+            0,
+            0,
+            Some("198.51.100.1".parse().unwrap()),
+        );
+        assert_eq!(select_best_path(&[only]), Some(0));
+    }
+
+    #[test]
+    fn test_rfc_local_pref_preferred() {
+        let lower = test_route(
+            100,
+            vec![65001, 65010],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+        let higher = test_route(
+            200,
+            vec![65001, 65010],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.3".parse().unwrap()),
+        );
+
+        assert_eq!(select_best_path(&[lower, higher]), Some(1));
+    }
+
+    #[test]
+    fn test_rfc_locally_originated_preferred() {
+        let learned = test_route(
+            100,
+            vec![65001, 65010],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+        let local = test_route(100, vec![65001, 65010], BgpOrigin::Igp, 10, 0, None);
+
+        assert_eq!(select_best_path(&[learned, local]), Some(1));
+    }
+
+    #[test]
+    fn test_rfc_shorter_as_path_preferred() {
+        let longer = test_route(
+            100,
+            vec![65001, 65100, 65200, 65300],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+        let shorter = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.3".parse().unwrap()),
+        );
+
+        assert_eq!(select_best_path(&[longer, shorter]), Some(1));
+    }
+
+    #[test]
+    fn test_rfc_origin_order_igp_over_egp_over_incomplete() {
+        let incomplete = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Incomplete,
+            10,
+            0,
+            Some("198.51.100.4".parse().unwrap()),
+        );
+        let egp = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Egp,
+            10,
+            0,
+            Some("198.51.100.3".parse().unwrap()),
+        );
+        let igp = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+
+        assert_eq!(select_best_path(&[incomplete, egp, igp]), Some(2));
+    }
+
+    #[test]
+    fn test_rfc_med_compared_only_for_same_neighbor_as() {
+        let same_neighbor_as_higher_med = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Igp,
+            200,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+        let same_neighbor_as_lower_med = test_route(
+            100,
+            vec![65001, 65200],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.3".parse().unwrap()),
+        );
+
+        assert_eq!(
+            select_best_path(&[
+                same_neighbor_as_higher_med.clone(),
+                same_neighbor_as_lower_med.clone()
+            ]),
+            Some(1)
+        );
+
+        let different_neighbor_as_higher_med = test_route(
+            100,
+            vec![65002, 65100],
+            BgpOrigin::Igp,
+            200,
+            0,
+            Some("198.51.100.2".parse().unwrap()),
+        );
+        let different_neighbor_as_lower_med = test_route(
+            100,
+            vec![65003, 65200],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.3".parse().unwrap()),
+        );
+
+        // MED is ignored across different neighboring AS values; tiebreak falls through
+        // to lower router-id (`received_from`) in this implementation.
+        assert_eq!(
+            select_best_path(&[
+                different_neighbor_as_higher_med,
+                different_neighbor_as_lower_med
+            ]),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_rfc_router_id_tiebreaker_prefers_lower_id() {
+        let higher_router_id = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.200".parse().unwrap()),
+        );
+        let lower_router_id = test_route(
+            100,
+            vec![65001, 65100],
+            BgpOrigin::Igp,
+            10,
+            0,
+            Some("198.51.100.10".parse().unwrap()),
+        );
+
+        assert_eq!(select_best_path(&[higher_router_id, lower_router_id]), Some(1));
+    }
 }

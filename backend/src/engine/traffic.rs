@@ -12,7 +12,13 @@ pub fn compute_flows(topology: &Topology) -> Vec<TrafficFlow> {
                 continue;
             }
 
-            let flow = trace_flow(topology, &router.id, &gen.dest_prefix, gen.id.clone(), gen.rate_bps);
+            let flow = trace_flow(
+                topology,
+                &router.id,
+                &gen.dest_prefix,
+                gen.id.clone(),
+                gen.rate_bps,
+            );
             flows.push(flow);
         }
     }
@@ -197,10 +203,10 @@ fn has_connected_prefix(router: &Router, dest_prefix: &str) -> bool {
         return false;
     };
 
-    router.interfaces.values().any(|iface| {
-        iface.is_up
-            && iface.ip_address.network() == dest.network()
-    })
+    router
+        .interfaces
+        .values()
+        .any(|iface| iface.is_up && iface.ip_address.network() == dest.network())
 }
 
 /// Update link utilization based on computed flows.

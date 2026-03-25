@@ -246,7 +246,11 @@ fn parse_simple_term(lines: &[&str]) -> Result<(PolicyTerm, usize), String> {
                 .map_err(|_| "Invalid med value")?;
             actions.push(PolicySetAction::SetMed(val));
         } else if line.starts_with("prepend-as ") {
-            let parts: Vec<&str> = line.strip_prefix("prepend-as ").unwrap().split_whitespace().collect();
+            let parts: Vec<&str> = line
+                .strip_prefix("prepend-as ")
+                .unwrap()
+                .split_whitespace()
+                .collect();
             if parts.len() != 2 {
                 return Err("prepend-as requires ASN and count".to_string());
             }
@@ -286,7 +290,10 @@ fn parse_juniper_policy(input: &str) -> Result<RoutePolicy, String> {
     let mut i = 0;
 
     // Skip outer `policy-options {` wrapper if present
-    if lines.get(i).map_or(false, |l| l.starts_with("policy-options")) {
+    if lines
+        .get(i)
+        .map_or(false, |l| l.starts_with("policy-options"))
+    {
         i += 1; // skip "policy-options {"
     }
 
@@ -508,7 +515,10 @@ fn parse_juniper_then_line(
         // Repeated ASN format: "65001 65001 65001"
         if !parts.is_empty() {
             if let Ok(asn) = parts[0].parse::<u32>() {
-                let count = parts.iter().filter(|&&p| p.parse::<u32>().ok() == Some(asn)).count() as u32;
+                let count = parts
+                    .iter()
+                    .filter(|&&p| p.parse::<u32>().ok() == Some(asn))
+                    .count() as u32;
                 actions.push(PolicySetAction::PrependAsPath { asn, count });
             }
         }
@@ -969,10 +979,7 @@ route-map SET-ATTRS permit 20
 
         let t2 = &policy.terms[1];
         assert_eq!(t2.name, "seq-20");
-        assert_eq!(
-            t2.match_conditions.community,
-            Some("no-export".to_string())
-        );
+        assert_eq!(t2.match_conditions.community, Some("no-export".to_string()));
         assert!(matches!(
             &t2.actions[0],
             PolicySetAction::AddCommunity(c) if c == "65001:300"

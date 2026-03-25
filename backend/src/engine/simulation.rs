@@ -4,10 +4,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use super::bgp;
 use super::events::*;
 use super::models::*;
 use super::ospf;
-use super::bgp;
 use super::traffic;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,12 +147,7 @@ impl SimulationEngine {
                 ref source_router_id,
                 area_id,
             } => {
-                ospf::flood_lsa_to_area(
-                    &mut self.topology,
-                    lsa_key,
-                    source_router_id,
-                    area_id,
-                );
+                ospf::flood_lsa_to_area(&mut self.topology, lsa_key, source_router_id, area_id);
             }
             EventType::BgpSessionEvent {
                 ref router_id,
