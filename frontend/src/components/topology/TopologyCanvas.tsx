@@ -13,7 +13,8 @@ export default function TopologyCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
 
-  const { autonomousSystems, links, linkUtilization } = useTopologyStore();
+  const { autonomousSystems, standaloneRouters, links, linkUtilization } =
+    useTopologyStore();
   const { selectRouter, selectAS, selectLink, clearSelection } =
     useSelectionStore();
 
@@ -54,8 +55,24 @@ export default function TopologyCanvas() {
       asIndex++;
     }
 
+    // Standalone routers (no parent AS)
+    for (const [routerId, router] of Object.entries(standaloneRouters)) {
+      const classes = ["router", "standalone"];
+      if (router.bgp_process) classes.push("bgp-enabled");
+
+      elements.push({
+        data: {
+          id: routerId,
+          label: router.name,
+          routerData: router,
+        },
+        position: { x: router.position[0], y: router.position[1] },
+        classes: classes.join(" "),
+      });
+    }
+
     // Links
-    const allRouters = getAllRouters(autonomousSystems);
+    const allRouters = getAllRouters(autonomousSystems, standaloneRouters);
     for (const [linkId, link] of Object.entries(links)) {
       // Find router IDs for each interface
       const routerA = allRouters.find((r) =>
@@ -88,7 +105,7 @@ export default function TopologyCanvas() {
     }
 
     return elements;
-  }, [autonomousSystems, links, linkUtilization]);
+  }, [autonomousSystems, standaloneRouters, links, linkUtilization]);
 
   // Initialize Cytoscape
   useEffect(() => {

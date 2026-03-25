@@ -4,11 +4,11 @@ A real-time network simulator for designing and simulating network topologies wi
 
 ## Features
 
-- **Topology Design** — Create autonomous systems, routers, interfaces, and links through an interactive canvas
+- **Topology Design** — Create autonomous systems, routers, interfaces, and links through an interactive canvas. Supports standalone routers outside any AS for edge devices, route servers, or lab scenarios
 - **OSPF Simulation** — Link-state routing with LSA flooding, SPF (Dijkstra), neighbor state machine, and multi-area support
 - **BGP Simulation** — Full FSM, best-path selection (RFC 4271), iBGP/eBGP peering, Adj-RIBs, and Loc-RIB
 - **Traffic Simulation** — Define traffic generators, trace flows through the network via FIB lookups, and visualize per-link utilization
-- **Route Policies** — BGP import/export filtering with two syntax options: a simple DSL and Juniper-style `policy-statement` syntax (auto-detected)
+- **Route Policies** — BGP import/export filtering with three syntax options: simple DSL, Juniper `policy-statement`, and Cisco IOS `route-map` (auto-detected)
 - **Real-Time Visualization** — Cytoscape.js topology graph with live link utilization coloring, WebSocket tick updates, and interactive pan/zoom/drag
 - **Save/Load** — Export and import full topology snapshots as JSON
 - **GNS3 Export** — Export topologies as `.gns3` project files with auto-generated Cisco IOS startup configs (interfaces, OSPF, BGP, route-maps)
@@ -64,7 +64,7 @@ cargo build --release
 The interface is a dark-themed split layout:
 
 - **Toolbar** (top) — Add AS/routers/links, start/stop simulation, adjust tick rate, save/load topologies, export to GNS3
-- **Topology Canvas** (left) — Interactive graph showing autonomous systems as groups, routers as nodes, and links as edges. Link color reflects utilization (green → yellow → red). Failed links appear in red.
+- **Topology Canvas** (left) — Interactive graph showing autonomous systems as groups, routers as nodes, and links as edges. Standalone routers appear with a teal dashed border outside any AS group. Link color reflects utilization (green → yellow → red). Failed links appear in red.
 - **Detail Panel** (right) — Context-sensitive view that shows:
   - **Router details** — interfaces, RIB entries, OSPF neighbors, BGP peers, BGP best routes, traffic generators
   - **Link details** — connected routers, bandwidth, delay, current load/utilization, and a button to fail/restore the link
@@ -72,7 +72,7 @@ The interface is a dark-themed split layout:
 
 ## Route Policies
 
-Policies filter and modify BGP routes on import/export. Two syntax formats are supported — the format is auto-detected when a policy is submitted.
+Policies filter and modify BGP routes on import/export. Three syntax formats are supported — the format is auto-detected when a policy is submitted.
 
 Policies are applied when configured on a BGP neighbor via `import_policy` or `export_policy`. Import policies filter routes entering the Loc-RIB; export policies filter routes being advertised to peers.
 
@@ -134,6 +134,31 @@ The outer `policy-options` wrapper is optional — `policy-statement` can be use
 | | `community delete <value>;` |
 | | `accept;` / `reject;` |
 
+### Cisco IOS Route-Map Syntax
+
+```
+route-map PREFER-CUSTOMER permit 10
+ match community 65001:100
+ match ip address prefix-list 10.0.0.0/8
+ set local-preference 150
+ set metric 50
+ set as-path prepend 65001 65001 65001
+ set community 65001:200 additive
+!
+route-map PREFER-CUSTOMER deny 20
+!
+```
+
+Each `route-map` sequence becomes a policy term. `permit` maps to accept, `deny` maps to reject. A trailing `deny` sequence with no match conditions is treated as the default action; otherwise IOS implicit deny applies.
+
+| Match Conditions | Set Actions |
+|---|---|
+| `match community <value>` | `set local-preference <n>` |
+| `match as-path <pattern>` | `set metric <n>` |
+| `match ip address prefix-list <prefix>` | `set as-path prepend <asn> ...` |
+| `match ip address <acl>` | `set community <value> additive` |
+| | `set comm-list <name> delete` |
+
 ## GNS3 Export
 
 Click **Export GNS3** in the toolbar (or `GET /api/v1/export/gns3`) to download a `.gns3` project file. The export includes:
@@ -155,7 +180,7 @@ All endpoints are under `/api/v1`. Key groups:
 
 | Group | Endpoints | Description |
 |-------|-----------|-------------|
-| Topology | `/topology/as`, `/topology/routers/{id}`, `/topology/links` | CRUD for AS, routers, interfaces, links |
+| Topology | `/topology/as`, `/topology/routers`, `/topology/links` | CRUD for AS, routers (AS-bound and standalone), interfaces, links |
 | OSPF | `/ospf/{router_id}/lsdb`, `neighbors`, `routes` | Query OSPF state per router |
 | BGP | `/bgp/{router_id}/enable`, `neighbors`, `routes` | Manage BGP sessions and view routes |
 | Traffic | `/traffic/generators`, `flows`, `link-utilization` | Traffic generators and flow tracing |

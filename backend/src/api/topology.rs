@@ -18,6 +18,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/as/{as_id}", web::delete().to(delete_autonomous_system))
             .route("/as/{as_id}/routers", web::get().to(list_routers))
             .route("/as/{as_id}/routers", web::post().to(create_router))
+            .route("/routers", web::get().to(list_standalone_routers))
+            .route("/routers", web::post().to(create_standalone_router))
             .route("/routers/{router_id}", web::get().to(get_router))
             .route("/routers/{router_id}", web::delete().to(delete_router))
             .route(
@@ -124,6 +126,38 @@ async fn create_router(
     }
 }
 
+async fn list_standalone_routers(state: AppState) -> HttpResponse {
+    let engine = state.read();
+    let routers: Vec<_> = engine.topology.standalone_routers.values().collect();
+    HttpResponse::Ok().json(routers)
+}
+
+async fn create_standalone_router(
+    state: AppState,
+    body: web::Json<CreateRouterRequest>,
+) -> HttpResponse {
+    let mut engine = state.write();
+
+    let router_ip: std::net::Ipv4Addr = match body.router_id_ip.parse() {
+        Ok(ip) => ip,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(MessageResponse {
+                message: "Invalid router ID IP".to_string(),
+            })
+        }
+    };
+
+    let router = store::create_router(
+        &body.name,
+        "standalone",
+        router_ip,
+        (body.position_x, body.position_y),
+    );
+    let id = router.id.clone();
+    engine.topology.standalone_routers.insert(id.clone(), router);
+    HttpResponse::Created().json(IdResponse { id })
+}
+
 async fn get_router(state: AppState, path: web::Path<String>) -> HttpResponse {
     let engine = state.read();
     let router_id = path.into_inner();
@@ -138,16 +172,14 @@ async fn get_router(state: AppState, path: web::Path<String>) -> HttpResponse {
 async fn delete_router(state: AppState, path: web::Path<String>) -> HttpResponse {
     let mut engine = state.write();
     let router_id = path.into_inner();
-    for asys in engine.topology.autonomous_systems.values_mut() {
-        if asys.routers.remove(&router_id).is_some() {
-            return HttpResponse::Ok().json(MessageResponse {
-                message: format!("Deleted router {}", router_id),
-            });
-        }
+    match engine.topology.remove_router(&router_id) {
+        Some(_) => HttpResponse::Ok().json(MessageResponse {
+            message: format!("Deleted router {}", router_id),
+        }),
+        None => HttpResponse::NotFound().json(MessageResponse {
+            message: format!("Router {} not found", router_id),
+        }),
     }
-    HttpResponse::NotFound().json(MessageResponse {
-        message: format!("Router {} not found", router_id),
-    })
 }
 
 async fn add_interface(
@@ -206,6 +238,14 @@ async fn delete_link(state: AppState, path: web::Path<String>) -> HttpResponse {
     if let Some(link) = engine.topology.links.get(&link_id) {
         let iface_a = link.interface_a_id.clone();
         let iface_b = link.interface_b_id.clone();
+        for router in engine.topology.standalone_routers.values_mut() {
+            if let Some(iface) = router.interfaces.get_mut(&iface_a) {
+                iface.link_id = None;
+            }
+            if let Some(iface) = router.interfaces.get_mut(&iface_b) {
+                iface.link_id = None;
+            }
+        }
         for asys in engine.topology.autonomous_systems.values_mut() {
             for router in asys.routers.values_mut() {
                 if let Some(iface) = router.interfaces.get_mut(&iface_a) {

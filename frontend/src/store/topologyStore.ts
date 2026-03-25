@@ -8,6 +8,7 @@ import type {
 
 interface TopologyState {
   autonomousSystems: Record<string, AutonomousSystem>;
+  standaloneRouters: Record<string, Router>;
   links: Record<string, Link>;
   linkUtilization: Record<string, number>;
 
@@ -18,12 +19,14 @@ interface TopologyState {
 
 export const useTopologyStore = create<TopologyState>((set) => ({
   autonomousSystems: {},
+  standaloneRouters: {},
   links: {},
   linkUtilization: {},
 
   setTopology: (snapshot) =>
     set({
       autonomousSystems: snapshot.autonomous_systems,
+      standaloneRouters: snapshot.standalone_routers ?? {},
       links: snapshot.links,
     }),
 
@@ -31,14 +34,19 @@ export const useTopologyStore = create<TopologyState>((set) => ({
     set({ linkUtilization: util }),
 
   clear: () =>
-    set({ autonomousSystems: {}, links: {}, linkUtilization: {} }),
+    set({ autonomousSystems: {}, standaloneRouters: {}, links: {}, linkUtilization: {} }),
 }));
 
 // Derived selectors
 export function getAllRouters(
   autonomousSystems: Record<string, AutonomousSystem>,
+  standaloneRouters?: Record<string, Router>,
 ): Router[] {
-  return Object.values(autonomousSystems).flatMap((as_) =>
+  const asRouters = Object.values(autonomousSystems).flatMap((as_) =>
     Object.values(as_.routers),
   );
+  const standalone = standaloneRouters
+    ? Object.values(standaloneRouters)
+    : [];
+  return [...standalone, ...asRouters];
 }

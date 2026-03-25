@@ -5,20 +5,26 @@ import { formatBps } from "../../utils/formatting.ts";
 
 export default function RouterPanel() {
   const { selectedNodeId, selectedNodeType } = useSelectionStore();
-  const { autonomousSystems } = useTopologyStore();
+  const { autonomousSystems, standaloneRouters } = useTopologyStore();
 
   if (selectedNodeType !== "router" || !selectedNodeId) {
     return <div style={styles.empty}>Select a router to view details</div>;
   }
 
-  // Find the router
+  // Find the router (check standalone first, then AS-bound)
   let router: Router | null = null;
   let asName = "";
-  for (const as_ of Object.values(autonomousSystems)) {
-    if (as_.routers[selectedNodeId]) {
-      router = as_.routers[selectedNodeId]!;
-      asName = `${as_.name} (AS${as_.asn})`;
-      break;
+
+  if (standaloneRouters[selectedNodeId]) {
+    router = standaloneRouters[selectedNodeId]!;
+    asName = "Standalone";
+  } else {
+    for (const as_ of Object.values(autonomousSystems)) {
+      if (as_.routers[selectedNodeId]) {
+        router = as_.routers[selectedNodeId]!;
+        asName = `${as_.name} (AS${as_.asn})`;
+        break;
+      }
     }
   }
 

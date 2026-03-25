@@ -297,7 +297,7 @@ pub struct PolicyTerm {
     pub terminal_action: PolicyAction,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct MatchConditions {
     pub prefix_list: Option<Vec<String>>,
     pub as_path_regex: Option<String>,
@@ -324,12 +324,16 @@ pub enum PolicyAction {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Topology {
     pub autonomous_systems: HashMap<String, AutonomousSystem>,
+    pub standalone_routers: HashMap<String, Router>,
     pub links: HashMap<String, Link>,
     pub policies: HashMap<String, RoutePolicy>,
 }
 
 impl Topology {
     pub fn get_router(&self, router_id: &str) -> Option<&Router> {
+        if let Some(r) = self.standalone_routers.get(router_id) {
+            return Some(r);
+        }
         for asys in self.autonomous_systems.values() {
             if let Some(r) = asys.routers.get(router_id) {
                 return Some(r);
@@ -339,6 +343,9 @@ impl Topology {
     }
 
     pub fn get_router_mut(&mut self, router_id: &str) -> Option<&mut Router> {
+        if let Some(r) = self.standalone_routers.get_mut(router_id) {
+            return Some(r);
+        }
         for asys in self.autonomous_systems.values_mut() {
             if let Some(r) = asys.routers.get_mut(router_id) {
                 return Some(r);
@@ -348,16 +355,36 @@ impl Topology {
     }
 
     pub fn all_routers(&self) -> Vec<&Router> {
-        self.autonomous_systems
+        self.standalone_routers
             .values()
-            .flat_map(|a| a.routers.values())
+            .chain(
+                self.autonomous_systems
+                    .values()
+                    .flat_map(|a| a.routers.values()),
+            )
             .collect()
     }
 
     pub fn all_routers_mut(&mut self) -> Vec<&mut Router> {
-        self.autonomous_systems
+        self.standalone_routers
             .values_mut()
-            .flat_map(|a| a.routers.values_mut())
+            .chain(
+                self.autonomous_systems
+                    .values_mut()
+                    .flat_map(|a| a.routers.values_mut()),
+            )
             .collect()
+    }
+
+    pub fn remove_router(&mut self, router_id: &str) -> Option<Router> {
+        if let Some(r) = self.standalone_routers.remove(router_id) {
+            return Some(r);
+        }
+        for asys in self.autonomous_systems.values_mut() {
+            if let Some(r) = asys.routers.remove(router_id) {
+                return Some(r);
+            }
+        }
+        None
     }
 }

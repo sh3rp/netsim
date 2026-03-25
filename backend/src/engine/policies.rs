@@ -88,7 +88,7 @@ fn apply_set_action(action: &PolicySetAction, route: &mut BgpRoute) {
     }
 }
 
-/// Parse a policy from either the simple DSL or Juniper-style syntax.
+/// Parse a policy from the simple DSL, Juniper-style, or Cisco IOS route-map syntax.
 /// Auto-detects format based on content.
 ///
 /// ## Simple DSL format:
@@ -133,12 +133,29 @@ fn apply_set_action(action: &PolicySetAction, route: &mut BgpRoute) {
 ///
 /// The Juniper parser also accepts `policy-statement` without the
 /// outer `policy-options` wrapper.
+///
+/// ## Cisco IOS route-map format:
+/// ```text
+/// route-map PREFER-CUSTOMER permit 10
+///  match community 65001:100
+///  match as-path 100
+///  match ip address prefix-list 10.0.0.0/8
+///  set local-preference 150
+///  set metric 50
+///  set as-path prepend 65001 65001 65001
+///  set community 65001:200 additive
+/// !
+/// route-map PREFER-CUSTOMER deny 20
+/// !
+/// ```
 pub fn parse_policy(input: &str) -> Result<RoutePolicy, String> {
     let trimmed = input.trim();
 
     // Auto-detect format
     if trimmed.starts_with("policy-options") || trimmed.starts_with("policy-statement") {
         parse_juniper_policy(trimmed)
+    } else if trimmed.starts_with("route-map ") {
+        parse_cisco_policy(trimmed)
     } else {
         parse_simple_policy(trimmed)
     }
@@ -537,6 +554,197 @@ fn parse_juniper_then_line(
     Ok(())
 }
 
+// ── Cisco IOS route-map parser ──
+
+fn parse_cisco_policy(input: &str) -> Result<RoutePolicy, String> {
+    let lines: Vec<&str> = input.lines().map(|l| l.trim()).collect();
+
+    // Extract policy name from the first route-map line
+    // Format: route-map <NAME> permit|deny <SEQ>
+    let first = lines.first().ok_or("Empty policy")?;
+    let name = parse_route_map_header(first)?.0;
+
+    let mut terms = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+
+        if line.starts_with("route-map ") {
+            let (_, action, seq) = parse_route_map_header(line)?;
+
+            let mut match_conditions = MatchConditions::default();
+            let mut actions = Vec::new();
+            i += 1;
+
+            // Parse match/set lines until next route-map, "!", or end
+            while i < lines.len() {
+                let line = lines[i];
+                if line.starts_with("route-map ") || line == "!" || line == "end" {
+                    break;
+                }
+                if !line.is_empty() {
+                    parse_cisco_match_set_line(line, &mut match_conditions, &mut actions)?;
+                }
+                i += 1;
+            }
+
+            terms.push(PolicyTerm {
+                name: format!("seq-{}", seq),
+                match_conditions,
+                actions,
+                terminal_action: action,
+            });
+
+            // Skip "!" separator if present
+            if i < lines.len() && (lines[i] == "!" || lines[i] == "end") {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // If last term is deny with no conditions, treat it as the default action
+    let default_action = if let Some(last) = terms.last() {
+        if last.match_conditions == MatchConditions::default()
+            && last.actions.is_empty()
+            && matches!(last.terminal_action, PolicyAction::Reject)
+        {
+            let action = last.terminal_action.clone();
+            terms.pop();
+            action
+        } else {
+            // IOS implicit deny at end of route-map
+            PolicyAction::Reject
+        }
+    } else {
+        PolicyAction::Reject
+    };
+
+    Ok(RoutePolicy {
+        name,
+        terms,
+        default_action,
+    })
+}
+
+/// Parse a route-map header line: `route-map <NAME> permit|deny <SEQ>`
+fn parse_route_map_header(line: &str) -> Result<(String, PolicyAction, u32), String> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 4 || parts[0] != "route-map" {
+        return Err(format!("Invalid route-map line: {}", line));
+    }
+
+    let name = parts[1].to_string();
+    let action = match parts[2] {
+        "permit" => PolicyAction::Accept,
+        "deny" => PolicyAction::Reject,
+        other => return Err(format!("Expected permit or deny, got: {}", other)),
+    };
+    let seq: u32 = parts[3].parse().map_err(|_| "Invalid sequence number")?;
+
+    Ok((name, action, seq))
+}
+
+fn parse_cisco_match_set_line(
+    line: &str,
+    conditions: &mut MatchConditions,
+    actions: &mut Vec<PolicySetAction>,
+) -> Result<(), String> {
+    let line = line.trim();
+
+    // Match conditions
+    if line.starts_with("match community ") {
+        let val = line.strip_prefix("match community ").unwrap().trim();
+        let val = val.trim_matches('"').to_string();
+        conditions.community = Some(val);
+    } else if line.starts_with("match as-path ") {
+        let val = line.strip_prefix("match as-path ").unwrap().trim();
+        let val = val.trim_matches('"').to_string();
+        conditions.as_path_regex = Some(val);
+    } else if line.starts_with("match ip address prefix-list ") {
+        let val = line
+            .strip_prefix("match ip address prefix-list ")
+            .unwrap()
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        let prefixes = conditions.prefix_list.get_or_insert_with(Vec::new);
+        prefixes.push(val);
+    } else if line.starts_with("match ip address ") {
+        // match ip address <acl-or-prefix>
+        let val = line
+            .strip_prefix("match ip address ")
+            .unwrap()
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        let prefixes = conditions.prefix_list.get_or_insert_with(Vec::new);
+        prefixes.push(val);
+    }
+    // Set actions
+    else if line.starts_with("set local-preference ") {
+        let val: u32 = line
+            .strip_prefix("set local-preference ")
+            .unwrap()
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid local-preference value")?;
+        actions.push(PolicySetAction::SetLocalPref(val));
+    } else if line.starts_with("set metric ") {
+        let val: u32 = line
+            .strip_prefix("set metric ")
+            .unwrap()
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid metric value")?;
+        actions.push(PolicySetAction::SetMed(val));
+    } else if line.starts_with("set as-path prepend ") {
+        let rest = line.strip_prefix("set as-path prepend ").unwrap().trim();
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        if !parts.is_empty() {
+            if let Ok(asn) = parts[0].parse::<u32>() {
+                let count = parts
+                    .iter()
+                    .filter(|&&p| p.parse::<u32>().ok() == Some(asn))
+                    .count() as u32;
+                actions.push(PolicySetAction::PrependAsPath { asn, count });
+            }
+        }
+    } else if line.starts_with("set community ") {
+        let rest = line.strip_prefix("set community ").unwrap().trim();
+        // Check for "additive" keyword
+        if rest.ends_with("additive") {
+            let val = rest
+                .strip_suffix("additive")
+                .unwrap()
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            actions.push(PolicySetAction::AddCommunity(val));
+        } else if rest.starts_with("none") {
+            // "set community none" — we can't model clearing all communities, skip
+        } else {
+            // Without additive, it replaces — model as add
+            let val = rest.trim_matches('"').to_string();
+            actions.push(PolicySetAction::AddCommunity(val));
+        }
+    } else if line.starts_with("set comm-list ") && line.contains("delete") {
+        // set comm-list <name> delete
+        let rest = line.strip_prefix("set comm-list ").unwrap().trim();
+        let val = rest
+            .strip_suffix("delete")
+            .unwrap_or(rest)
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        actions.push(PolicySetAction::RemoveCommunity(val));
+    }
+
+    Ok(())
+}
+
 fn parse_action_keyword(s: &str) -> Result<PolicyAction, String> {
     match s.trim() {
         "accept" => Ok(PolicyAction::Accept),
@@ -704,5 +912,121 @@ policy-statement prepend-path {
             }
             _ => panic!("Expected PrependAsPath"),
         }
+    }
+
+    #[test]
+    fn test_parse_cisco_basic_route_map() {
+        let input = r#"
+route-map PREFER-CUSTOMER permit 10
+ match community 65001:100
+ set local-preference 150
+!
+route-map PREFER-CUSTOMER deny 20
+!
+"#;
+        let policy = parse_policy(input).unwrap();
+        assert_eq!(policy.name, "PREFER-CUSTOMER");
+        assert_eq!(policy.terms.len(), 1);
+        assert_eq!(policy.terms[0].name, "seq-10");
+        assert_eq!(policy.terms[0].terminal_action, PolicyAction::Accept);
+        assert_eq!(policy.default_action, PolicyAction::Reject);
+        assert_eq!(
+            policy.terms[0].match_conditions.community,
+            Some("65001:100".to_string())
+        );
+        assert!(matches!(
+            policy.terms[0].actions[0],
+            PolicySetAction::SetLocalPref(150)
+        ));
+    }
+
+    #[test]
+    fn test_parse_cisco_multiple_sequences() {
+        let input = r#"
+route-map SET-ATTRS permit 10
+ match as-path ^65002
+ set local-preference 200
+ set metric 50
+!
+route-map SET-ATTRS permit 20
+ match community no-export
+ set community 65001:300 additive
+!
+"#;
+        let policy = parse_policy(input).unwrap();
+        assert_eq!(policy.name, "SET-ATTRS");
+        assert_eq!(policy.terms.len(), 2);
+
+        let t1 = &policy.terms[0];
+        assert_eq!(t1.name, "seq-10");
+        assert_eq!(
+            t1.match_conditions.as_path_regex,
+            Some("^65002".to_string())
+        );
+        assert_eq!(t1.actions.len(), 2);
+        assert!(matches!(t1.actions[0], PolicySetAction::SetLocalPref(200)));
+        assert!(matches!(t1.actions[1], PolicySetAction::SetMed(50)));
+
+        let t2 = &policy.terms[1];
+        assert_eq!(t2.name, "seq-20");
+        assert_eq!(
+            t2.match_conditions.community,
+            Some("no-export".to_string())
+        );
+        assert!(matches!(
+            &t2.actions[0],
+            PolicySetAction::AddCommunity(c) if c == "65001:300"
+        ));
+    }
+
+    #[test]
+    fn test_parse_cisco_as_path_prepend() {
+        let input = r#"
+route-map PREPEND permit 10
+ set as-path prepend 65001 65001 65001
+!
+"#;
+        let policy = parse_policy(input).unwrap();
+        assert_eq!(policy.name, "PREPEND");
+        let term = &policy.terms[0];
+        match &term.actions[0] {
+            PolicySetAction::PrependAsPath { asn, count } => {
+                assert_eq!(*asn, 65001);
+                assert_eq!(*count, 3);
+            }
+            _ => panic!("Expected PrependAsPath"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cisco_prefix_list_and_comm_delete() {
+        let input = r#"
+route-map FILTER permit 10
+ match ip address prefix-list 10.0.0.0/8
+ set comm-list BADCOMM delete
+!
+"#;
+        let policy = parse_policy(input).unwrap();
+        let term = &policy.terms[0];
+        let prefixes = term.match_conditions.prefix_list.as_ref().unwrap();
+        assert_eq!(prefixes[0], "10.0.0.0/8");
+        assert!(matches!(
+            &term.actions[0],
+            PolicySetAction::RemoveCommunity(c) if c == "BADCOMM"
+        ));
+    }
+
+    #[test]
+    fn test_parse_cisco_implicit_deny() {
+        // No explicit deny sequence — IOS has implicit deny at end
+        let input = r#"
+route-map SIMPLE permit 10
+ set local-preference 100
+!
+"#;
+        let policy = parse_policy(input).unwrap();
+        assert_eq!(policy.terms.len(), 1);
+        // Implicit deny at end of route-map
+        assert_eq!(policy.default_action, PolicyAction::Reject);
     }
 }

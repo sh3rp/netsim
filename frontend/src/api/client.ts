@@ -41,6 +41,23 @@ export const createRouter = (
   });
 export const deleteRouter = (id: string) =>
   request(`/topology/routers/${id}`, { method: "DELETE" });
+export const listStandaloneRouters = () =>
+  request<any[]>("/topology/routers");
+export const createStandaloneRouter = (
+  name: string,
+  routerIdIp: string,
+  x: number,
+  y: number,
+) =>
+  request<{ id: string }>("/topology/routers", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      router_id_ip: routerIdIp,
+      position_x: x,
+      position_y: y,
+    }),
+  });
 export const addInterface = (
   routerId: string,
   name: string,

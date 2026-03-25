@@ -198,6 +198,7 @@ export interface TickUpdate {
 
 export interface TopologySnapshot {
   autonomous_systems: Record<string, AutonomousSystem>;
+  standalone_routers: Record<string, Router>;
   links: Record<string, Link>;
   policies: Record<string, RoutePolicy>;
 }

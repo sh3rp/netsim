@@ -135,15 +135,22 @@ pub fn create_link(
 
     topology.links.insert(link_id.clone(), link);
 
-    // Set link_id on both interfaces
-    for asys in topology.autonomous_systems.values_mut() {
-        for router in asys.routers.values_mut() {
-            if let Some(iface) = router.interfaces.get_mut(iface_a_id) {
-                iface.link_id = Some(link_id.clone());
-            }
-            if let Some(iface) = router.interfaces.get_mut(iface_b_id) {
-                iface.link_id = Some(link_id.clone());
-            }
+    // Set link_id on both interfaces (search AS-bound and standalone routers)
+    let all_routers = topology
+        .standalone_routers
+        .values_mut()
+        .chain(
+            topology
+                .autonomous_systems
+                .values_mut()
+                .flat_map(|a| a.routers.values_mut()),
+        );
+    for router in all_routers {
+        if let Some(iface) = router.interfaces.get_mut(iface_a_id) {
+            iface.link_id = Some(link_id.clone());
+        }
+        if let Some(iface) = router.interfaces.get_mut(iface_b_id) {
+            iface.link_id = Some(link_id.clone());
         }
     }
 

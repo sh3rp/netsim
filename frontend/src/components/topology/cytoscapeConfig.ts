@@ -45,6 +45,15 @@ export const cytoscapeStylesheet: Stylesheet[] = [
       shape: "ellipse",
     },
   },
+  // Standalone router (no AS)
+  {
+    selector: "node.router.standalone",
+    style: {
+      "background-color": "#38b2ac",
+      "border-color": "#4fd1c5",
+      "border-style": "dashed",
+    },
+  },
   // Router with BGP enabled
   {
     selector: "node.router.bgp-enabled",

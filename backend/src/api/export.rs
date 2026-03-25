@@ -47,78 +47,87 @@ fn topology_to_gns3(topology: &Topology) -> Gns3Project {
     // Map from our interface ID -> (gns3_node_id, adapter_number, port_number)
     let mut iface_port_map: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // Create GNS3 nodes for each router
-    for asys in topology.autonomous_systems.values() {
-        for router in asys.routers.values() {
-            let node_id = Uuid::new_v4().to_string();
-            router_node_map.insert(router.id.clone(), node_id.clone());
+    // Create GNS3 nodes for all routers (AS-bound and standalone)
+    let all_routers: Vec<&crate::engine::models::Router> = topology
+        .standalone_routers
+        .values()
+        .chain(
+            topology
+                .autonomous_systems
+                .values()
+                .flat_map(|a| a.routers.values()),
+        )
+        .collect();
 
-            // Map interfaces to adapter/port numbers
-            let mut port_number: u32 = 0;
-            let mut ports = Vec::new();
+    for router in &all_routers {
+        let node_id = Uuid::new_v4().to_string();
+        router_node_map.insert(router.id.clone(), node_id.clone());
 
-            for (iface_id, iface) in &router.interfaces {
-                iface_port_map.insert(iface_id.clone(), (node_id.clone(), 0, port_number));
+        // Map interfaces to adapter/port numbers
+        let mut port_number: u32 = 0;
+        let mut ports = Vec::new();
 
-                ports.push(Gns3Port {
-                    adapter_number: 0,
-                    port_number,
-                    name: format!("Ethernet{}", port_number),
-                    short_name: format!("e{}", port_number),
-                    link_type: "ethernet".to_string(),
-                    data_link_types: HashMap::from([
-                        ("Ethernet".to_string(), "DLT_EN10MB".to_string()),
-                    ]),
-                    description: format!("{} - {}", iface_id, iface.ip_address),
-                });
-                port_number += 1;
-            }
+        for (iface_id, iface) in &router.interfaces {
+            iface_port_map.insert(iface_id.clone(), (node_id.clone(), 0, port_number));
 
-            // Build router configuration for properties
-            let startup_config = build_router_config(router, asys.asn, topology);
-
-            let node = Gns3Node {
-                compute_id: "local".to_string(),
-                console: None,
-                console_auto_start: false,
-                console_type: "telnet".to_string(),
-                first_port_name: None,
-                height: 45,
-                width: 66,
-                label: Gns3Label {
-                    rotation: 0,
-                    style: "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;".to_string(),
-                    text: router.name.clone(),
-                    x: 2,
-                    y: -25,
-                },
-                name: router.name.clone(),
-                node_id: node_id.clone(),
-                node_type: "dynamips".to_string(),
-                port_name_format: "Ethernet{0}".to_string(),
-                port_segment_size: 0,
-                ports,
-                properties: Gns3NodeProperties {
-                    platform: "c7200".to_string(),
-                    ram: 512,
-                    nvram: 256,
-                    image: "c7200-adventerprisek9-mz.152-4.M7.image".to_string(),
-                    startup_config_content: if startup_config.is_empty() {
-                        None
-                    } else {
-                        Some(startup_config)
-                    },
-                    slot0: Some("C7200-IO-FE".to_string()),
-                    slot1: Some("PA-GE".to_string()),
-                },
-                symbol: ":/symbols/router.svg".to_string(),
-                x: router.position.0 as i32,
-                y: router.position.1 as i32,
-                z: 1,
-            };
-
-            nodes.push(node);
+            ports.push(Gns3Port {
+                adapter_number: 0,
+                port_number,
+                name: format!("Ethernet{}", port_number),
+                short_name: format!("e{}", port_number),
+                link_type: "ethernet".to_string(),
+                data_link_types: HashMap::from([
+                    ("Ethernet".to_string(), "DLT_EN10MB".to_string()),
+                ]),
+                description: format!("{} - {}", iface_id, iface.ip_address),
+            });
+            port_number += 1;
         }
+
+        // Build router configuration for properties
+        let startup_config = build_router_config(router, topology);
+
+        let node = Gns3Node {
+            compute_id: "local".to_string(),
+            console: None,
+            console_auto_start: false,
+            console_type: "telnet".to_string(),
+            first_port_name: None,
+            height: 45,
+            width: 66,
+            label: Gns3Label {
+                rotation: 0,
+                style: "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;".to_string(),
+                text: router.name.clone(),
+                x: 2,
+                y: -25,
+            },
+            name: router.name.clone(),
+            node_id: node_id.clone(),
+            node_type: "dynamips".to_string(),
+            port_name_format: "Ethernet{0}".to_string(),
+            port_segment_size: 0,
+            ports,
+            properties: Gns3NodeProperties {
+                platform: "c7200".to_string(),
+                ram: 512,
+                nvram: 256,
+                image: "c7200-adventerprisek9-mz.152-4.M7.image".to_string(),
+                startup_config_content: if startup_config.is_empty() {
+                    None
+                } else {
+                    Some(startup_config)
+                },
+                slot0: Some("C7200-IO-FE".to_string()),
+                slot1: Some("PA-GE".to_string()),
+            },
+            symbol: ":/symbols/router.svg".to_string(),
+            x: router.position.0 as i32,
+            y: router.position.1 as i32,
+            z: 1,
+        };
+
+        nodes.push(node);
     }
 
     // Create GNS3 links
@@ -242,7 +251,6 @@ fn topology_to_gns3(topology: &Topology) -> Gns3Project {
 /// Build a Cisco IOS-style startup config for a router.
 fn build_router_config(
     router: &crate::engine::models::Router,
-    _asn: u32,
     topology: &Topology,
 ) -> String {
     let mut config = String::new();
